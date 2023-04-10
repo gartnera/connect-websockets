@@ -9,6 +9,7 @@ import (
 
 	connect_websockets "github.com/gartnera/connect-websockets"
 	pingv1 "github.com/gartnera/connect-websockets/internal/gen"
+	"github.com/gartnera/connect-websockets/internal/gen/pingv1connect"
 	"github.com/gartnera/connect-websockets/internal/server"
 	"github.com/gorilla/websocket"
 	"github.com/stretchr/testify/require"
@@ -38,7 +39,7 @@ func TestWebsocketServerStream(t *testing.T) {
 	exampleServer := server.NewPingServerWrapper(0, connect_websockets.NewProxy)
 	defer exampleServer.Cleanup()
 
-	u := url.URL{Scheme: "ws", Host: exampleServer.Addr.String(), Path: "/connect.ping.v1.PingService/CountUp"}
+	u := url.URL{Scheme: "ws", Host: exampleServer.Addr.String(), Path: pingv1connect.PingServiceCountUpProcedure}
 	headers := http.Header{}
 	headers.Add("Content-Type", "application/connect+proto")
 	headers.Add("Response-Type", "application/connect+proto")
@@ -77,7 +78,7 @@ func TestWebsocketServerStreamError(t *testing.T) {
 	exampleServer := server.NewPingServerWrapper(0, connect_websockets.NewProxy)
 	defer exampleServer.Cleanup()
 
-	u := url.URL{Scheme: "ws", Host: exampleServer.Addr.String(), Path: "/connect.ping.v1.PingService/CountUp"}
+	u := url.URL{Scheme: "ws", Host: exampleServer.Addr.String(), Path: pingv1connect.PingServiceCountUpProcedure}
 	headers := http.Header{}
 	headers.Add("Content-Type", "application/connect+proto")
 	headers.Add("Response-Type", "application/connect+proto")
@@ -99,4 +100,33 @@ func TestWebsocketServerStreamError(t *testing.T) {
 	// the connection should now be closed
 	_, _, err = c.ReadMessage()
 	require.Error(t, err)
+}
+
+func TestWebsocketBidiStream(t *testing.T) {
+	exampleServer := server.NewPingServerWrapper(0, connect_websockets.NewProxyPanic)
+	defer exampleServer.Cleanup()
+
+	u := url.URL{Scheme: "ws", Host: exampleServer.Addr.String(), Path: pingv1connect.PingServiceCumSumProcedure}
+	headers := http.Header{}
+	headers.Add("Content-Type", "application/connect+proto")
+	headers.Add("Response-Type", "application/connect+proto")
+	c, _, err := websocket.DefaultDialer.Dial(u.String(), headers)
+	require.NoError(t, err)
+	defer func() {
+		_ = c.Close()
+	}()
+
+	localSum := 0
+	for i := 0; i < 10; i++ {
+		localSum += i
+		err = c.WriteMessage(websocket.BinaryMessage, generateConnectMessage(&pingv1.CumSumRequest{Number: int64(i)}))
+		require.NoError(t, err)
+		msgType, rawMsg, err := c.ReadMessage()
+		require.NoError(t, err, i)
+		require.Equal(t, websocket.BinaryMessage, msgType)
+		require.NotEmpty(t, rawMsg)
+		require.Zero(t, rawMsg[0], "flags should be unset on normal messages")
+		msg := decodeConnectMessage(rawMsg, &pingv1.CumSumResponse{})
+		require.Equal(t, int64(localSum), msg.Sum)
+	}
 }

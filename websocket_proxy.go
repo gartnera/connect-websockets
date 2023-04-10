@@ -112,6 +112,8 @@ func (p *Proxy) proxy(w http.ResponseWriter, r *http.Request) {
 	for key, value := range r.Header {
 		request.Header.Set(key, value[0])
 	}
+	// force HTTP2 simulation to make connect-go bidi code happy
+	request.ProtoMajor = 2
 
 	responseBodyR, responseBodyW := io.Pipe()
 	response := newInMemoryResponseWriter(responseBodyW)
@@ -140,17 +142,6 @@ func (p *Proxy) proxy(w http.ResponseWriter, r *http.Request) {
 				}
 				return
 			}
-			/*
-				// write framing info
-				err = binary.Write(requestBodyW, binary.BigEndian, uint8(0))
-				if err != nil {
-					panic(err)
-				}
-				err = binary.Write(requestBodyW, binary.BigEndian, uint32(len(payload)))
-				if err != nil {
-					panic(err)
-				}
-			*/
 			_, err = requestBodyW.Write(payload)
 			if err != nil {
 				panic(err)
