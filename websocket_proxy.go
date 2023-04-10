@@ -4,7 +4,6 @@ package connect_websockets
 // with some connect specific adjustments
 
 import (
-	"bytes"
 	"context"
 	"encoding/binary"
 	"fmt"
@@ -135,14 +134,14 @@ func (p *Proxy) proxy(w http.ResponseWriter, r *http.Request) {
 			if ctx.Err() != nil {
 				return
 			}
-			_, payload, err := conn.ReadMessage()
+			_, reader, err := conn.NextReader()
 			if err != nil {
 				if !isClosedConnError(err) {
 					p.Errors <- fmt.Errorf("unable to read payload: %w", err)
 				}
 				return
 			}
-			_, err = requestBodyW.Write(payload)
+			_, err = io.Copy(requestBodyW, reader)
 			if err != nil {
 				panic(err)
 			}
@@ -159,22 +158,29 @@ func (p *Proxy) proxy(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			break
 		}
-		res := make([]byte, payloadLen)
-		var n, count int
-		for count < int(payloadLen) {
-			n, err = responseBodyR.Read(res)
+		var writer io.WriteCloser
+		writer, err = conn.NextWriter(websocket.BinaryMessage)
+		if err != nil {
+			break
+		}
+		_, err = writer.Write([]byte{flags})
+		if err != nil {
+			break
+		}
+		err = binary.Write(writer, binary.BigEndian, payloadLen)
+		if err != nil {
+			break
+		}
+		var n, count int64
+		for count < int64(payloadLen) {
+			n, err = io.CopyN(writer, responseBodyR, int64(payloadLen)-count)
 			if err != nil {
 				break
 			}
 			count += n
 		}
-		if err != nil {
-			break
-		}
-		payloadLenRaw := make([]byte, 4)
-		binary.BigEndian.PutUint32(payloadLenRaw, payloadLen)
-		msg := bytes.Join([][]byte{{flags}, payloadLenRaw, res}, []byte{})
-		err = conn.WriteMessage(websocket.BinaryMessage, msg)
+
+		err = writer.Close()
 		if err != nil {
 			break
 		}
